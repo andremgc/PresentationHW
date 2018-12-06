@@ -1,0 +1,259 @@
+---
+title: "Solar Irradiation Data on Brazil"
+author: "Andre Moura Gomes da Costa"
+date: "December 6, 2018"
+output: ioslides_presentation
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(cache = F)
+knitr::opts_chunk$set(warning = F)
+knitr::opts_chunk$set(fig.keep = T)
+knitr::opts_chunk$set(message = F)
+knitr::opts_chunk$set(warning = F)
+```
+
+
+```{r load, message=F, warning=F, echo=F, cache=F}
+
+library(gridExtra)
+library(cluster)
+library(vegan)
+library(clusterCrit)
+library(tidyr)
+library(raster)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+library(kableExtra)
+library(geosphere)
+library(corrr)
+ theme_set(theme_bw())
+border<-c("-51.5_4.5","-50.5_3.5","-50.5_2.5","-49.5_1.5",
+          "-49.5_0.5","-48.5_-0.5","-47.5_-0.5","-46.5_-0.5",
+          "-45.5_-1.5","-44.5_-1.5","-43.5_-2.5","-42.5_-2.5",
+          "-41.5_-2.5","-40.5_-2.5","-39.5_-2.5","-38.5_-3.5",
+          "-37.5_-4.5","-36.5_-4.5","-35.5_-5.5","-34.5_-6.5",
+          "-34.5_-7.5","-34.5_-8.5","-35.5_-9.5","-35.5_-10.5",
+          "-36.5_-10.5","-37.5_-11.5","-37.5_-12.5","-38.5_-13.5",
+          "-38.5_-14.5","-38.5_-15.5","-38.5_-16.5","-39.5_-17.5",
+          "-39.5_-18.5","-39.5_-19.5","-40.5_-20.5","-40.5_-21.5",
+          "-40.5_-22.5","-41.5_-23.5","-42.5_-23.5","-43.5_-23.5",
+          "-44.5_-23.5","-45.5_-23.5","-46.5_-24.5","-47.5_-25.5",
+          "-48.5_-26.5","-48.5_-27.5","-48.5_-28.5","-49.5_-29.5",
+          "-50.5_-30.5","-50.5_-31.5","-51.5_-32.5","-52.5_-33.5"
+)
+
+load("/home/andre/Mestrado/Dados/out_MO_min.rdata")
+load("/home/andre/Mestrado/Dados/SSs.rdata")
+Ano0<-1988
+Dados2 <- Out %>% 
+    filter( (YEAR >=Ano0 & YEAR <= 2007) ) %>% 
+    mutate(    LAT=as.numeric(as.character(LAT)),
+               LON=as.numeric(as.character(LON)),
+  #             GHI=GHI_seas+GHI_deseas,
+               DATE = dmy(paste("01",MO,YEAR, sep='/'))) %>% 
+    group_by(LON,LAT)%>% 
+    mutate (
+        GHI_=mean(GHI_trend),
+        GHI_trendo=GHI_trend-GHI_,
+#        GHI = GHI_seas+GHI_lowf+GHI_month+GHI_trend,
+        kt = KT_seas+KT_lowf+KT_month+KT_trend,
+        D_GHI_month = lag(kt)-kt,
+        Dkt_=mean(KT_trend)
+    ) %>%
+    ungroup() %>%
+    arrange(desc(LAT),LON) 
+rm(Out)
+
+Dados2 <- mutate(Dados2, LON = round(LON,digits=1),
+                 LAT = round(LAT,digits=1)) %>% 
+    unite(Lon_Lat,LON,LAT,remove = F) %>%
+    filter(!(Lon_Lat %in% (border)))
+
+plote<-Dados2%>%filter(Lon_Lat=="-37.5_-6.5")
+#plote<-Dados2%>%filter(Lon_Lat=="-53.5_-10.5")
+
+
+tmnho=.2
+
+
+DadosSeas<-Dados2 %>% filter (YEAR == 1990)
+DadosOsc <-Dados2 #%>%filter(MO==7) 
+DadosMedia <- Dados2 %>% group_by(LON,LAT) %>%
+    summarise(GHI_=mean(GHI_),
+              Dkt_=mean(Dkt_),
+              GHI_sd_lowf=sd(GHI_lowf,na.rm = T),
+              GHI_sd_month=sd(GHI_month,na.rm = T),
+              GHI_sd_trend=sd(GHI_trend,na.rm = T),
+              GHI_sd_D_month=sd(D_GHI_month,na.rm=T),
+              GHI_sd_seas=sd(GHI_seas,na.rm = T)) %>% 
+    unite(Lon_Lat,LON,LAT,remove = F)
+
+SD_SumPairs <- function (data){
+    size<-dim(data)[2]
+
+    SD<-matrix(data=NA,ncol=size,nrow = size)
+        for (i in 1:size){
+            for (j in 1:size){
+                med1<-Brasil$GHI_[pamOsc$id.med[i]]
+                med2<-Brasil$GHI_[pamOsc$id.med[j]]
+                
+                
+                SD[i,j] <- sd(data[,i]+data[,j]) /(med1+med2)
+            }
+        }
+    rowname<-c(1:size)
+    SD<-data.frame(rowname,SD)
+    colnames(SD)[2:(size+1)]<-(1:size)
+    return(SD)
+} 
+
+SD_SumPairsO <- function (data){
+    size<-dim(data)[2]
+    SD<-matrix(data=NA,ncol=size,nrow = size)
+    Ratios <- SD
+    GHI_med <- SD
+    for (i in 1:size){
+        for (j in 1:size){
+            d1<-data[,i]
+            d2<-data[,j]
+            med1<-Brasil$GHI_[pamOsc$id.med[i]]
+            med2<-Brasil$GHI_[pamOsc$id.med[j]]
+            
+            f <- function(razao){
+                out<-sd(razao*d1+(1-razao)*d2)/
+                    (razao*med1+(1-razao)*med2)
+                return(out)
+            }
+            
+            opt<-optimize(f,interval = c(0,1))
+            
+            SD[i,j] <- opt$objective
+            Ratios[i,j] <- opt$minimum
+            GHI_med[i,j] <- Ratios[i,j]*med1+(1-Ratios[i,j])*med2
+            
+        }
+    }
+    rowname<-c(1:size)
+    SD<-data.frame(rowname,SD)
+    colnames(SD)[2:(size+1)]<-(1:size)
+    Ratios<-data.frame(rowname,Ratios)
+    colnames(Ratios)[2:(size+1)]<-(1:size)
+    GHI_med<-data.frame(rowname,GHI_med)
+    colnames(GHI_med)[2:(size+1)]<-(1:size)
+    return(list("SD"=SD,"Ratios"=Ratios,"GHI_med"=GHI_med))
+} 
+
+
+
+CorrLocal <- function(Correlacao.Tidy, faixa){
+    # Correlacao Tidy must be a Data Frame for which there Codigo.x and Codigo.y.
+    # Forces all elements to exist. There could be other ways to do so.
+        Correlacao.aux <- Correlacao.Tidy
+        Correlacao.aux <- Correlacao.aux %>%
+                mutate(Codigo.x = Correlacao.Tidy$Codigo.y,
+                       Codigo.y = Correlacao.Tidy$Codigo.x) %>%
+                rbind(Correlacao.Tidy)
+        
+        Saida <- Correlacao.aux %>%
+                filter(Distancia >= faixa[1] & Distancia <= faixa[2]) %>%
+                group_by(Codigo.x) %>%
+                summarise(cor = mean(cor, na.rm=T)) %>%
+                separate(Codigo.x,c("LON","LAT"),"_")
+        
+        
+        Saida <- mutate(Saida,
+                #        MO = (ifelse(MO==0,13,MO)),
+                        LON = as.numeric(as.character(LON)),
+                        LAT = as.numeric(as.character(LAT)))
+        return(Saida)
+}
+
+
+```
+
+
+```{r data, message=F, warning=F, echo=F}
+set.seed(30213)
+Variavel = "GHI_seas"
+DadosEspalhadosSeas <- DadosSeas %>% dplyr::select(LAT,LON,DATE,Variavel)%>%
+    spread(DATE,Variavel) %>% 
+    arrange(desc(LAT),LON) 
+
+dataSeas<-DadosEspalhadosSeas[,-c(2,1)]
+
+set.seed(1562)
+Variavel="GHI_lowf"
+DadosEspalhadosLowf <- DadosOsc %>% dplyr::filter(!is.na(GHI_lowf)) %>%
+    dplyr::select(LAT,LON,DATE,Variavel)%>%
+    spread(DATE,Variavel) %>% 
+    arrange(desc(LAT),LON)
+
+dataLowf<-DadosEspalhadosLowf[,-c(2,1)]
+
+set.seed(1562)
+Variavel="GHI_month"
+DadosEspalhadosMonth <- DadosOsc %>% dplyr::filter(!is.na(GHI_month)) %>%
+    dplyr::select(LAT,LON,DATE,Variavel)%>%
+    spread(DATE,Variavel) %>% 
+    arrange(desc(LAT),LON)
+
+dataMonth<-DadosEspalhadosMonth[,-c(2,1)]
+
+Variavel="D_GHI_month"
+DadosEspalhadosDelta <- DadosOsc %>% dplyr::filter(!is.na(D_GHI_month)) %>%
+    dplyr::select(LAT,LON,DATE,Variavel)%>%
+    spread(DATE,Variavel) %>% 
+    arrange(desc(LAT),LON)
+
+dataDelta<-DadosEspalhadosDelta[,-c(2,1)]
+
+
+set.seed(30213)
+Variavel="GHI_trendo"
+DadosEspalhadosTrend <- DadosOsc %>% dplyr::select(LAT,LON,DATE,Variavel)%>%
+    spread(DATE,Variavel) %>% 
+    arrange(desc(LAT),LON) 
+
+#DadosM.Espalhados.S [,c(2,1)]<-DadosM.Espalhados.S[,c(2,1)]*0.00001
+dataTrend<-DadosEspalhadosTrend[,-c(2,1)]
+
+Brasil<-DadosEspalhadosTrend[,c(2,1)]
+Brasil <- mutate(Brasil, LON = round(LON,digits=1),
+                 LAT = round(LAT,digits=1))
+Brasil <- unite(Brasil,Lon_Lat,LON,LAT,remove = F) %>% left_join(DadosMedia)
+
+dataOsc <- dataMonth + dataLowf
+
+```
+
+## About this web page
+
+This web page was made for a homework on Coursera's MOOC course: Developing Data Products, from Jhon Hopkins University. 
+
+The next slide shows the long-term daily irradiation data for the Brazilian area in an interactive plot. It uses data from the POWER project from NASA.
+
+
+## Brazil's Solar Resource Avaibility
+
+Brazil presents high levels of solar irradiation incidence over its entire area. 
+
+```{r mapas0, echo=FALSE}
+library(plotly)
+
+mapa<-ggplot(data=Brasil) +
+        geom_raster(data=Brasil,aes(x=LON,y=LAT,fill=GHI_))+
+            scale_fill_gradientn(colours = rev(c(RColorBrewer::brewer.pal(n = 8, name = "Spectral"))),  na.value = rgb(0,0,0,0))+#, limits = c(3.9,6.5)) + 
+ #   geom_text(aes(x=LON,y=LAT,label=Centros),check_overlap = T, size=2)+
+        coord_equal() +theme_bw()
+#mapa 
+
+ggplotly(mapa)
+```
+
+## Thanks
+
